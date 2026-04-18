@@ -6,8 +6,8 @@ Displays model name, context window usage, git branch status, and rate limit inf
 
 ## Features
 
-- **Model name** in bold cyan
-- **Context bar** — color-coded fill (green → cyan → yellow → red) with percentage
+- **Model name** in bold cyan, compacted (e.g. `Opus 4.7 (1M context)` → `Opus 4.7·1M`)
+- **Context bar** — color-coded fill (green → cyan → yellow → red) with percentage and **tokens remaining** (e.g. `185k left`); 1M vs 200k window auto-detected from model name
 - **Git info** — current branch, staged/modified/untracked counts
 - **Rate limits** — 5-hour and 7-day usage (color shifts at 50% and 80%)
 
@@ -23,7 +23,10 @@ Then configure Claude Code to use it as the status line command:
 ```json
 // ~/.claude/settings.json
 {
-  "status_line_command": "~/.claude/cc-statusline"
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/cc-statusline"
+  }
 }
 ```
 
