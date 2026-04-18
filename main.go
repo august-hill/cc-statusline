@@ -126,6 +126,34 @@ func gitInfo(dir string) string {
 	return strings.Join(parts, " ")
 }
 
+func trimModel(name string) string {
+	i := strings.Index(name, " (")
+	if i == -1 {
+		return name
+	}
+	suffix := strings.TrimSuffix(name[i+2:], " context)")
+	suffix = strings.TrimSuffix(suffix, ")")
+	return name[:i] + "·" + suffix
+}
+
+func contextWindowSize(modelName string) int {
+	if strings.Contains(modelName, "1M") {
+		return 1_000_000
+	}
+	return 200_000
+}
+
+func formatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%dk", n/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 func rateLimitBadge(label string, pct float64) string {
 	color := white
 	if pct >= 80 {
@@ -147,14 +175,19 @@ func main() {
 		return
 	}
 
-	model := s.Model.DisplayName
+	rawModel := s.Model.DisplayName
+	model := trimModel(rawModel)
 	if model == "" {
 		model = "Claude"
 	}
 
+	pct := s.ContextWindow.UsedPercentage
+	total := contextWindowSize(rawModel)
+	remaining := int(float64(total) * (100 - pct) / 100)
+
 	parts := []string{
 		cyan + bold + model + reset,
-		contextBar(s.ContextWindow.UsedPercentage),
+		contextBar(pct) + " " + white + formatTokens(remaining) + " left" + reset,
 	}
 
 	git := gitInfo(s.Workspace.CurrentDir)
