@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -34,12 +35,17 @@ type SessionData struct {
 	Workspace struct {
 		CurrentDir string `json:"current_dir"`
 	} `json:"workspace"`
+	Effort struct {
+		Level string `json:"level"`
+	} `json:"effort"`
 	RateLimits struct {
 		FiveHour struct {
 			UsedPercentage *float64 `json:"used_percentage"`
+			ResetsAt       *int64   `json:"resets_at"`
 		} `json:"five_hour"`
 		SevenDay struct {
 			UsedPercentage *float64 `json:"used_percentage"`
+			ResetsAt       *int64   `json:"resets_at"`
 		} `json:"seven_day"`
 	} `json:"rate_limits"`
 }
@@ -154,14 +160,60 @@ func formatTokens(n int) string {
 	}
 }
 
-func rateLimitBadge(label string, pct float64) string {
+// formatReset turns a Unix-epoch reset time into a glanceable string,
+// adaptive to how far away it is: a countdown when under a day (the
+// actionable number for the 5h window), a weekday + time otherwise
+// (glanceable for the weekly cap).
+func formatReset(epoch int64, now time.Time) string {
+	d := time.Unix(epoch, 0).Sub(now)
+	if d <= 0 {
+		return "now"
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if h > 0 {
+			return fmt.Sprintf("%dh%02dm", h, m)
+		}
+		return fmt.Sprintf("%dm", m)
+	}
+	return time.Unix(epoch, 0).Format("Mon 15:04")
+}
+
+func effortBadge(level string) string {
+	if level == "" {
+		return ""
+	}
+	var color string
+	switch level {
+	case "low":
+		color = white
+	case "medium":
+		color = cyan
+	case "high":
+		color = yellow
+	case "xhigh":
+		color = magenta
+	case "max":
+		color = red
+	default:
+		color = white
+	}
+	return fmt.Sprintf("%seffort:%s%s", color+bold, level, reset)
+}
+
+func rateLimitBadge(label string, pct float64, resetsAt *int64, now time.Time) string {
 	color := white
 	if pct >= 80 {
 		color = red + bold
 	} else if pct >= 50 {
 		color = yellow
 	}
-	return fmt.Sprintf("%s%s:%d%%%s", color, label, int(pct), reset)
+	badge := fmt.Sprintf("%s%s:%d%%%s", color, label, int(pct), reset)
+	if resetsAt != nil {
+		badge += white + " · " + reset + cyan + formatReset(*resetsAt, now) + reset
+	}
+	return badge
 }
 
 func main() {
@@ -185,22 +237,33 @@ func main() {
 	total := contextWindowSize(rawModel)
 	remaining := int(float64(total) * (100 - pct) / 100)
 
-	parts := []string{
+	sep := white + " | " + reset
+
+	// Line 1 — orientation: model, context budget, git state.
+	line1 := []string{
 		cyan + bold + model + reset,
 		contextBar(pct) + " " + white + formatTokens(remaining) + " left" + reset,
 	}
-
-	git := gitInfo(s.Workspace.CurrentDir)
-	if git != "" {
-		parts = append(parts, git)
+	if git := gitInfo(s.Workspace.CurrentDir); git != "" {
+		line1 = append(line1, git)
 	}
 
-	if h := s.RateLimits.FiveHour.UsedPercentage; h != nil && *h > 0 {
-		parts = append(parts, rateLimitBadge("5h", *h))
+	// Line 2 — session config + rate-limit budget with reset times.
+	now := time.Now()
+	var line2 []string
+	if eb := effortBadge(s.Effort.Level); eb != "" {
+		line2 = append(line2, eb)
 	}
-	if d := s.RateLimits.SevenDay.UsedPercentage; d != nil && *d > 0 {
-		parts = append(parts, rateLimitBadge("7d", *d))
+	if h := s.RateLimits.FiveHour.UsedPercentage; h != nil {
+		line2 = append(line2, rateLimitBadge("5h", *h, s.RateLimits.FiveHour.ResetsAt, now))
+	}
+	if d := s.RateLimits.SevenDay.UsedPercentage; d != nil {
+		line2 = append(line2, rateLimitBadge("7d", *d, s.RateLimits.SevenDay.ResetsAt, now))
 	}
 
-	fmt.Print(strings.Join(parts, white+" | "+reset))
+	out := strings.Join(line1, sep)
+	if len(line2) > 0 {
+		out += "\n" + strings.Join(line2, sep)
+	}
+	fmt.Print(out)
 }
